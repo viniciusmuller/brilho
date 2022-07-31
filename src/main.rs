@@ -1,7 +1,7 @@
 use async_std::fs;
+use clap::Parser;
 use futures::future::join_all;
-use pulldown_cmark::{HeadingLevel, Options, Parser};
-use std::env;
+use pulldown_cmark::{HeadingLevel, Options};
 use std::error::Error;
 use std::fs::File;
 use walkdir::WalkDir;
@@ -51,7 +51,7 @@ fn heading_level_to_u8(level: HeadingLevel) -> u8 {
 
 impl MarkdownParser {
     pub fn parse(&mut self, input: &str) -> Vec<Card> {
-        let parser = Parser::new_ext(&input, Options::empty());
+        let parser = pulldown_cmark::Parser::new_ext(&input, Options::empty());
 
         for event in parser {
             match event {
@@ -215,16 +215,24 @@ fn is_markdown(extension: &str) -> bool {
     extension.ends_with(".md") || extension.ends_with(".markdown")
 }
 
+/// Simple program to greet a person
+#[derive(clap::Parser, Debug)]
+#[clap(author, version, about, long_about = None)]
+struct Args {
+    /// Directory or file containing markdown content
+    #[clap(short, long, value_parser)]
+    target: String,
+
+    /// Name of the outputted CSV file
+    #[clap(short, long, value_parser, default_value = "anki_cards.csv")]
+    output_file: String,
+}
+
 #[async_std::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let args: Vec<String> = env::args().collect();
-    if args.len() != 2 {
-        println!("usage: <program> <vault_directory>");
-        return Ok(());
-    }
-    let directory = &args[1];
+    let args = Args::parse();
 
-    let entries = WalkDir::new(directory)
+    let entries = WalkDir::new(args.target)
         .into_iter()
         .filter_map(|e| e.ok()) // Ignores errors (such as permission errors)
         .filter(|e| is_markdown(e.file_name().to_str().unwrap())); // markdown only files
@@ -236,8 +244,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let cards = join_all(futures).await.concat();
-    let output_path = "anki_cards.csv";
-    let file = File::create(output_path).unwrap();
+    let file = File::create(&args.output_file).unwrap();
 
     let mut wtr = csv::WriterBuilder::new()
         .delimiter(b'\t')
@@ -251,7 +258,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!(
         "Succesfully created {} cards into {}",
         cards.len(),
-        output_path
+        args.output_file
     );
 
     Ok(())

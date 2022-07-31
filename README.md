@@ -5,13 +5,13 @@ Brilho is a fast application that converts markdown files to Anki questions.
 
 ## With Nix
 ```bash
-nix run github:arcticlimer/brilho <directory>
+nix run github:arcticlimer/brilho --target <directory>
 ```
 
 ## With cargo
 ```bash
 cargo build --release
-./target/release/brilho <directory>
+./target/release/brilho --target <directory>
 ```
 
 # Usage
