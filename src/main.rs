@@ -1,6 +1,6 @@
 extern crate comrak;
 use async_std::fs;
-use futures::future::join_all;
+use futures::future::{join, join_all};
 use std::cell::RefCell;
 use std::{env, vec};
 
@@ -112,12 +112,22 @@ impl Default for Parser {
     }
 }
 
+async fn parse_node<'a>(node: &'a Node<'a, RefCell<Ast>>) -> Vec<Card> {
+    let mut parser = Parser::default();
+    parser.parse_from_root(node)
+}
+
 async fn create_computation(filepath: String) -> Vec<Card> {
     let arena = Arena::new();
     let content = fs::read_to_string(&filepath).await.unwrap();
     let root = parse_document(&arena, &content, &ComrakOptions::default());
-    let mut parser = Parser::default();
-    parser.parse_from_root(root)
+
+    let mut futures = Vec::with_capacity(100);
+    for child in root.children() {
+        futures.push(parse_node(child));
+    }
+
+    join_all(futures).await.concat()
 }
 
 #[async_std::main]
@@ -133,7 +143,7 @@ async fn main() {
         .filter_map(|e| e.ok()) // Ignores errors (such as permission errors)
         .filter(|e| e.file_name().to_str().unwrap().ends_with(".md")); // markdown only files
 
-    let mut futures = vec![];
+    let mut futures = Vec::with_capacity(500);
     for entry in entries {
         let path = entry.path().to_str().unwrap();
         futures.push(create_computation(path.to_owned()));
