@@ -1,5 +1,5 @@
 # Brilho 🌟
-Brilho is a fast application that converts markdown files to Anki questions.
+Brilho is a fast application that converts markdown files to Anki cards.
 
 # Setup
 
@@ -41,6 +41,8 @@ the **Import** tab.
 - URLs support
 - Backlink support
 - Use nested headings context in generated cards
+- Tests
+- Logging
 
 # Contributing
 Feel free to open issues and pull requests!
