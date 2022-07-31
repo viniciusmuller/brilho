@@ -211,18 +211,23 @@ async fn create_computation(filepath: String) -> Vec<Card> {
     return Vec::new();
 }
 
+fn is_markdown(extension: &str) -> bool {
+    extension.ends_with(".md") || extension.ends_with(".markdown")
+}
+
 #[async_std::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
     if args.len() != 2 {
-        println!("usage: <program> <vault_directory>")
+        println!("usage: <program> <vault_directory>");
+        return Ok(());
     }
     let directory = &args[1];
 
     let entries = WalkDir::new(directory)
         .into_iter()
         .filter_map(|e| e.ok()) // Ignores errors (such as permission errors)
-        .filter(|e| e.file_name().to_str().unwrap().ends_with(".md")); // markdown only files
+        .filter(|e| is_markdown(e.file_name().to_str().unwrap())); // markdown only files
 
     let mut futures = Vec::with_capacity(500);
     for entry in entries {

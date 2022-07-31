@@ -13,9 +13,9 @@
       (
         system:
         let
-          project-name = "project-name";
+          brilho = "brilho";
           rust-channel = "stable";
-          rust-version = "latest"; # ex. 1.55.0
+          rust-version = "latest";
           rust-overlay = import rust;
 
           pkgs = import nixpkgs {
@@ -35,20 +35,20 @@
           };
 
           project-pkg = naersk-lib.buildPackage {
-            pname = project-name;
+            pname = brilho;
             root = pkgs.lib.cleanSource ./.;
           };
         in
         rec {
           # `nix build`
-          packages."${project-name}" = project-pkg;
-          defaultPackage = packages."${project-name}";
+          packages."${brilho}" = project-pkg;
+          defaultPackage = packages."${brilho}";
 
           # `nix run`
-          apps."${project-name}" = utils.lib.mkApp {
-            drv = packages."${project-name}";
+          apps."${brilho}" = utils.lib.mkApp {
+            drv = packages."${brilho}";
           };
-          defaultApp = apps."${project-name}";
+          # defaultApp = apps."${brilho}";
 
           # `nix develop`
           devShell = pkgs.mkShell {
