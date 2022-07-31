@@ -10,3 +10,5 @@ comrak = "0.14"
 walkdir = "2.3.2"
 async-std = {version = "1.12.0", features = ["attributes"]}
 futures = "0.3.21"
+regex = "1"
+lazy_static = "1.4.0"

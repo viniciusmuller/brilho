@@ -227,6 +227,8 @@ dependencies = [
  "async-std",
  "comrak",
  "futures",
+ "lazy_static",
+ "regex",
  "walkdir",
 ]
 
