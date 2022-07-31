@@ -1,33 +1,10 @@
-extern crate comrak;
 use async_std::fs;
 use futures::future::join_all;
-use regex::Regex;
-use std::cell::RefCell;
+use pulldown_cmark::{HeadingLevel, Options, Parser};
 use std::env;
+use std::error::Error;
 use std::fs::File;
-use std::io::Write;
-
-use comrak::arena_tree::Node;
-use comrak::nodes::{Ast, NodeValue};
-use comrak::{parse_document, Arena, ComrakOptions};
 use walkdir::WalkDir;
-
-#[derive(Debug)]
-struct Header {
-    pub level: u32,
-    pub title: String,
-    pub content: String,
-}
-
-impl Default for Header {
-    fn default() -> Self {
-        Self {
-            level: 0,
-            title: "".to_string(),
-            content: "".to_string(),
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 struct Card {
@@ -40,8 +17,8 @@ struct Card {
 impl Default for Card {
     fn default() -> Self {
         Self {
-            front: String::new(),
-            back: String::new(),
+            front: String::with_capacity(100),
+            back: String::with_capacity(300),
             bullets: Vec::with_capacity(10),
             links: Vec::with_capacity(5),
         }
@@ -49,69 +26,139 @@ impl Default for Card {
 }
 
 #[derive(Debug)]
-struct Parser {
-    current_header: Header,
+struct MarkdownParser {
     current_card: Card,
+    current_list_item: String,
+    current_code_block: String,
     cards: Vec<Card>,
-    in_header: bool,
+    parsing: bool,
     in_list: bool,
+    in_list_item: bool,
     expecting_title: bool,
+    in_code_block: bool,
 }
 
-impl Parser {
-    pub fn parse_from_root<'a>(&mut self, node: &'a Node<'a, RefCell<Ast>>) -> Vec<Card> {
-        self.parse_node_recursive(node);
-        self.finish();
+fn heading_level_to_u8(level: HeadingLevel) -> u8 {
+    match level {
+        HeadingLevel::H1 => 1,
+        HeadingLevel::H2 => 2,
+        HeadingLevel::H3 => 3,
+        HeadingLevel::H4 => 4,
+        HeadingLevel::H5 => 5,
+        HeadingLevel::H6 => 5,
+    }
+}
+
+impl MarkdownParser {
+    pub fn parse(&mut self, input: &str) -> Vec<Card> {
+        let parser = Parser::new_ext(&input, Options::empty());
+
+        for event in parser {
+            match event {
+                pulldown_cmark::Event::SoftBreak | pulldown_cmark::Event::HardBreak => {
+                    if self.parsing {
+                        self.current_card.back.push_str("<br>")
+                    }
+                }
+                pulldown_cmark::Event::Text(value) => self.text(&value),
+                pulldown_cmark::Event::Code(code) => {
+                    let html_pre = format!("<pre>{}</pre>", code);
+                    // TODO: Function for this
+                    if self.in_list_item {
+                        self.current_list_item.push_str(&html_pre)
+                    } else {
+                        self.current_card.back.push_str(&html_pre)
+                    }
+                }
+                pulldown_cmark::Event::Start(tag) => match tag {
+                    pulldown_cmark::Tag::Heading(level, _content, _classes) => {
+                        self.expecting_title = true;
+                        self.heading(heading_level_to_u8(level))
+                    }
+                    pulldown_cmark::Tag::List(_idx) => self.list(),
+                    pulldown_cmark::Tag::BlockQuote | pulldown_cmark::Tag::Item => {
+                        self.in_list_item = true;
+                    }
+                    pulldown_cmark::Tag::CodeBlock(_) => {
+                        self.current_code_block = "<pre>".to_string();
+                        self.in_code_block = true
+                    }
+                    _ => (),
+                },
+                pulldown_cmark::Event::End(tag) => match tag {
+                    pulldown_cmark::Tag::Link(_link_type, url, title) => {
+                        self.link(&title, &url);
+                    }
+                    pulldown_cmark::Tag::List(_idx) => {
+                        self.in_list = false;
+                    }
+                    pulldown_cmark::Tag::BlockQuote | pulldown_cmark::Tag::Item => {
+                        self.current_card
+                            .bullets
+                            .push(self.current_list_item.clone());
+                        self.current_list_item = String::with_capacity(100);
+                        self.in_list_item = false;
+                    }
+                    pulldown_cmark::Tag::Heading(_, _, _) => {
+                        self.expecting_title = false;
+                    }
+                    pulldown_cmark::Tag::CodeBlock(_) => {
+                        self.current_code_block.push_str("</pre>");
+
+                        if self.in_list_item {
+                            self.current_list_item.push_str(&self.current_code_block)
+                        } else {
+                            self.current_card.back.push_str(&self.current_code_block)
+                        }
+
+                        self.in_code_block = false
+                    }
+                    _ => (),
+                },
+                _ => (),
+            }
+        }
+
+        self.add_current_card();
         self.cards.clone()
     }
 
-    fn parse_node_recursive<'a>(&mut self, node: &'a Node<'a, RefCell<Ast>>) {
-        match &mut node.data.borrow_mut().value {
-            // TODO: Build heading levels context in order to use subtopics in it like "Topic - <question>"
-            &mut NodeValue::Heading(ref mut heading) => self.heading(heading.level),
-            &mut NodeValue::List(ref mut _list) => self.list(),
-            &mut NodeValue::Text(ref mut text) => {
-                let content = String::from_utf8_lossy(text);
-                self.text(&content)
+    fn link(&mut self, _title: &str, url: &str) {
+        self.current_card.links.push(url.to_string());
+    }
+
+    fn add_current_card(&mut self) {
+        if self.current_card_valid() {
+            // Preprocessing
+            for link in &self.current_card.bullets {
+                if link.is_empty() {
+                    continue;
+                }
+
+                self.current_card.back.push_str("<br>- ");
+                self.current_card.back.push_str(link)
             }
-            _ => (),
-        }
 
-        // TODO: Study about how this tree representation works, currently
-        // it seems very sketchy
-        for c in node.children() {
-            self.parse_node_recursive(c)
+            self.cards.push(self.current_card.clone()); // TODO: try to avoid cloning here
+            self.current_card = Card::default()
         }
     }
 
-    fn finish(&mut self) {
-        if self.current_header.level == 0
-            || self.current_header.content.is_empty()
-            || self.current_header.title.is_empty()
-        {
-            return;
-        }
-
-        self.cards.push(self.current_card.clone());
+    fn current_card_valid(&mut self) -> bool {
+        !self.current_card.front.is_empty()
+            && (!self.current_card.back.is_empty() || !self.current_card.links.is_empty())
     }
 
-    fn heading(&mut self, level: u32) {
-        if self.in_header {
-            let card = Card {
-                front: self.current_header.title.to_string(),
-                back: self.current_header.content.to_string(),
-                ..Default::default()
-            };
-            self.cards.push(card);
+    fn heading(&mut self, _level: u8) {
+        if self.parsing {
+            self.add_current_card()
         }
 
-        self.expecting_title = true;
-        self.in_header = true;
-        self.current_header.level = level;
+        self.parsing = true;
     }
 
     fn list(&mut self) {
-        if !self.in_header {
+        if !self.parsing {
             return;
         }
 
@@ -119,100 +166,53 @@ impl Parser {
     }
 
     fn text(&mut self, content: &str) {
-        // TODO: Support backlinks
-        lazy_static::lazy_static! {
-            static ref IMAGE_BACKLINK: Regex = Regex::new(r"\[\[.*.png]]").unwrap();
-            static ref LINK: Regex = Regex::new(r"\[(.*)]\((.*)\)").unwrap();
-        }
-
-        // We parse links manually, since currently the comrak link parser seems
-        // very unreliable, e.g [links like](this) are losing their title metadata
-        dbg!(content, LINK.captures(&content));
-        if let Some(captures) = LINK.captures(content) {
-            let title = captures.get(0).unwrap();
-            let url = captures.get(1).unwrap();
-            dbg!(title, url);
-            // for capture in captures.iter() {
-            //     if let Some(mat) = capture {
-            //         self.current_card.links.push(mat.as_str().to_string());
-            //     }
-            // }
-        }
-
-        // if let Some(captures) = IMAGE_BACKLINK.captures(content) {
-        //     // TODO: Maybe use helper function for this
-        //     for capture in captures.iter() {
-        //         if let Some(mat) = capture {
-        //             self.current_card.images.push(mat.as_str().to_string());
-        //         }
-        //     }
-        // }
-
         if self.expecting_title {
-            self.current_header.title = content.to_string();
-            self.current_header.content = String::new();
-            self.expecting_title = false;
+            self.current_card.front = content.to_string();
             return;
         }
 
-        // TODO: we cannot assume every text token is separated by newlines
-        // that means not appending automatically a </br>
-        if self.in_list {
-            self.current_card.bullets.push(content.to_string());
-            self.in_list = false;
+        // TODO: Support backlinks
+        if self.in_code_block {
+            self.current_code_block.push_str(content);
             return;
         }
-        self.current_header.content.push_str(&content);
-        self.current_header.content.push_str("</br>")
+
+        if self.in_list_item {
+            self.current_list_item.push_str(content);
+            return;
+        }
+
+        self.current_card.back.push_str(&content);
     }
 }
 
-impl Default for Parser {
+impl Default for MarkdownParser {
     fn default() -> Self {
-        Parser {
+        MarkdownParser {
             current_card: Card::default(),
-            current_header: Header::default(),
+            current_list_item: String::with_capacity(100),
+            current_code_block: String::with_capacity(1000),
             cards: Vec::with_capacity(50),
-            in_header: false,
+            parsing: false,
             in_list: false,
+            in_list_item: false,
             expecting_title: false,
+            in_code_block: false,
         }
-    }
-}
-
-#[derive(Debug)]
-struct CsvBuilder<'a> {
-    buffer: &'a mut String,
-}
-
-impl<'a> CsvBuilder<'a> {
-    fn new(buffer: &'a mut String) -> Self {
-        Self { buffer }
-    }
-
-    pub fn add_card(self: &mut Self, card: &Card) {
-        self.buffer.push_str(&card.front);
-        self.buffer.push(',');
-        self.buffer.push_str(&card.back);
-        self.buffer.push('\n');
-    }
-
-    pub fn collect(self: &mut Self) -> &String {
-        self.buffer
     }
 }
 
 async fn create_computation(filepath: String) -> Vec<Card> {
-    let arena = Arena::new();
-    let content = fs::read_to_string(&filepath).await.unwrap();
-    let root = parse_document(&arena, &content, &ComrakOptions::default());
+    if let Ok(content) = fs::read_to_string(&filepath).await {
+        let mut parser = MarkdownParser::default();
+        return parser.parse(&content);
+    }
 
-    let mut parser = Parser::default();
-    parser.parse_from_root(root)
+    return Vec::new();
 }
 
 #[async_std::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
     if args.len() != 2 {
         println!("usage: <program> <vault_directory>")
@@ -230,16 +230,24 @@ async fn main() {
         futures.push(create_computation(path.to_owned()));
     }
 
-    let cards = join_all(futures).await;
+    let cards = join_all(futures).await.concat();
+    let output_path = "anki_cards.csv";
+    let file = File::create(output_path).unwrap();
 
-    let buffer = &mut String::new();
-    let mut csv_builder = CsvBuilder::new(buffer);
-    for card in cards.into_iter().flatten() {
-        // dbg!(&card);
-        csv_builder.add_card(&card);
+    let mut wtr = csv::WriterBuilder::new()
+        .delimiter(b'\t')
+        .quote_style(csv::QuoteStyle::NonNumeric)
+        .from_writer(file);
+
+    for card in &cards {
+        wtr.write_record(&[&card.front, &card.back])?;
     }
 
-    let result = csv_builder.collect();
-    let mut file = File::create("anki_cards.csv").unwrap();
-    file.write_all(result.as_bytes()).unwrap();
+    println!(
+        "Succesfully created {} cards into {}",
+        cards.len(),
+        output_path
+    );
+
+    Ok(())
 }
