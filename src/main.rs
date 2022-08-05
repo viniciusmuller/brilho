@@ -145,8 +145,15 @@ impl MarkdownParser {
     }
 
     fn current_card_valid(&mut self) -> bool {
-        !self.current_card.front.is_empty()
-            && (!self.current_card.back.is_empty() || !self.current_card.links.is_empty())
+        if !self.current_card.front.is_empty() && !self.current_card.back.is_empty() {
+            return true;
+        }
+
+        if !self.current_card.front.is_empty() || !self.current_card.bullets.is_empty() {
+            return true;
+        }
+
+        return false;
     }
 
     fn heading(&mut self, _level: u8) {
