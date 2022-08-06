@@ -45,13 +45,13 @@ fn heading_level_to_u8(level: HeadingLevel) -> u8 {
         HeadingLevel::H3 => 3,
         HeadingLevel::H4 => 4,
         HeadingLevel::H5 => 5,
-        HeadingLevel::H6 => 5,
+        HeadingLevel::H6 => 6,
     }
 }
 
 impl MarkdownParser {
     pub fn parse(&mut self, input: &str) -> Vec<Card> {
-        let parser = pulldown_cmark::Parser::new_ext(&input, Options::empty());
+        let parser = pulldown_cmark::Parser::new_ext(input, Options::empty());
 
         for event in parser {
             match event {
@@ -153,7 +153,7 @@ impl MarkdownParser {
             return true;
         }
 
-        return false;
+        false
     }
 
     fn heading(&mut self, _level: u8) {
@@ -189,7 +189,7 @@ impl MarkdownParser {
             return;
         }
 
-        self.current_card.back.push_str(&content);
+        self.current_card.back.push_str(content);
     }
 }
 
@@ -215,7 +215,7 @@ async fn create_computation(filepath: String) -> Vec<Card> {
         return parser.parse(&content);
     }
 
-    return Vec::new();
+    Vec::new()
 }
 
 fn is_markdown(extension: &str) -> bool {
