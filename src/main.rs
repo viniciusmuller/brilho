@@ -4,7 +4,20 @@ use futures::future::join_all;
 use pulldown_cmark::{HeadingLevel, Options};
 use std::error::Error;
 use std::fs::File;
+use syntect::highlighting::ThemeSet;
+use syntect::html::highlighted_html_for_string;
+use syntect::parsing::SyntaxSet;
 use walkdir::WalkDir;
+
+#[macro_use]
+extern crate lazy_static;
+
+lazy_static! {
+    // TODO: Use lazy_static
+    // Load these once at the start of your program
+    static ref SYNTAX_SET: SyntaxSet = SyntaxSet::load_defaults_newlines();
+    static ref THEME_SET: ThemeSet = ThemeSet::load_defaults();
+}
 
 #[derive(Debug, Clone)]
 struct Card {
@@ -26,10 +39,25 @@ impl Default for Card {
 }
 
 #[derive(Debug)]
+struct CodeBlock {
+    language: Option<String>,
+    code: String,
+}
+
+impl Default for CodeBlock {
+    fn default() -> Self {
+        Self {
+            language: None,
+            code: String::with_capacity(1000),
+        }
+    }
+}
+
+#[derive(Debug)]
 struct MarkdownParser {
     current_card: Card,
     current_list_item: String,
-    current_code_block: String,
+    current_code_block: CodeBlock,
     cards: Vec<Card>,
     parsing: bool,
     in_list: bool,
@@ -62,12 +90,15 @@ impl MarkdownParser {
                 }
                 pulldown_cmark::Event::Text(value) => self.text(&value),
                 pulldown_cmark::Event::Code(code) => {
-                    let html_pre = format!("<pre>{}</pre>", code);
-                    // TODO: Function for this
+                    if code.is_empty() {
+                        continue;
+                    }
+
+                    let result = format!("<bold>{}</bold>", code);
                     if self.in_list_item {
-                        self.current_list_item.push_str(&html_pre)
+                        self.current_list_item.push_str(&result);
                     } else {
-                        self.current_card.back.push_str(&html_pre)
+                        self.current_card.back.push_str(&result)
                     }
                 }
                 pulldown_cmark::Event::Start(tag) => match tag {
@@ -79,9 +110,19 @@ impl MarkdownParser {
                     pulldown_cmark::Tag::BlockQuote | pulldown_cmark::Tag::Item => {
                         self.in_list_item = true;
                     }
-                    pulldown_cmark::Tag::CodeBlock(_) => {
-                        self.current_code_block = "<pre>".to_string();
-                        self.in_code_block = true
+                    pulldown_cmark::Tag::CodeBlock(kind) => {
+                        match kind {
+                            pulldown_cmark::CodeBlockKind::Indented => {}
+                            pulldown_cmark::CodeBlockKind::Fenced(language) => {
+                                if language.is_empty() {
+                                    continue;
+                                }
+
+                                self.current_code_block.language = Some(language.to_string())
+                            }
+                        }
+
+                        self.in_code_block = true; // TODO: This flag might not be needed
                     }
                     _ => (),
                 },
@@ -103,14 +144,42 @@ impl MarkdownParser {
                         self.expecting_title = false;
                     }
                     pulldown_cmark::Tag::CodeBlock(_) => {
-                        self.current_code_block.push_str("</pre>");
+                        let result = {
+                            let lang = match &self.current_code_block.language {
+                                Some(lang) => lang,
+                                None => "",
+                            };
+                            let syntax = SYNTAX_SET
+                                .find_syntax_by_extension(&lang)
+                                .unwrap_or_else(|| SYNTAX_SET.find_syntax_plain_text());
+
+                            let theme = &THEME_SET.themes["base16-ocean.dark"]; // TODO: Make theme configurable
+                                                                                // TODO: remove theme background
+                            highlighted_html_for_string(
+                                &self.current_code_block.code,
+                                &SYNTAX_SET,
+                                syntax,
+                                theme,
+                            )
+                            .unwrap()
+                        };
+
+                        let left_aligned = format!(
+                            "
+                        <div style=\"text-align: left\">
+                            {}
+                        </div>
+                        ",
+                            result
+                        );
 
                         if self.in_list_item {
-                            self.current_list_item.push_str(&self.current_code_block)
+                            self.current_list_item.push_str(&left_aligned)
                         } else {
-                            self.current_card.back.push_str(&self.current_code_block)
+                            self.current_card.back.push_str(&left_aligned)
                         }
 
+                        self.current_code_block = CodeBlock::default();
                         self.in_code_block = false
                     }
                     _ => (),
@@ -180,7 +249,7 @@ impl MarkdownParser {
 
         // TODO: Support backlinks
         if self.in_code_block {
-            self.current_code_block.push_str(content);
+            self.current_code_block.code.push_str(content);
             return;
         }
 
@@ -198,7 +267,7 @@ impl Default for MarkdownParser {
         MarkdownParser {
             current_card: Card::default(),
             current_list_item: String::with_capacity(100),
-            current_code_block: String::with_capacity(1000),
+            current_code_block: CodeBlock::default(),
             cards: Vec::with_capacity(50),
             parsing: false,
             in_list: false,

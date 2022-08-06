@@ -12,3 +12,5 @@ async-std = {version = "1.12.0", features = ["attributes"]}
 futures = "0.3.21"
 csv = "1.1"
 clap = { version = "3.2.16", features = ["derive"] }
+syntect = "5.0"
+lazy_static = "1.4.0"

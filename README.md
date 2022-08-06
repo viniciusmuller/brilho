@@ -53,7 +53,6 @@ Benchmark #1: ./src/index.js ~/projects/leetcode_anki/ ./result.apkg
 - It should be minimal and only convert markdown files into anki cards
 
 # Planned features
-- Syntax highlighting
 - Images support
 - LaTeX support
 - URLs support
